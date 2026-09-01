@@ -1,0 +1,28 @@
+@import 'tailwindcss';
+
+@source '../js/admin/**/*.jsx';
+
+/*
+ * BBM Sehat dashboard palette — matches the Flutter app's dark theme
+ * (background #0D0D0D, accent green #639922, card #161615, border #2C2C2A)
+ * rather than Tailwind's default light theme used by the Laravel welcome
+ * page (resources/css/app.css), which this file is deliberately separate
+ * from.
+ */
+@theme {
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+
+    --color-bbm-bg: #0d0d0d;
+    --color-bbm-card: #161615;
+    --color-bbm-border: #2c2c2a;
+    --color-bbm-accent: #639922;
+    --color-bbm-accent-hover: #75b428;
+    --color-bbm-text: #ededec;
+    --color-bbm-text-muted: #a1a09a;
+}
+
+body {
+    background-color: var(--color-bbm-bg);
+    color: var(--color-bbm-text);
+}

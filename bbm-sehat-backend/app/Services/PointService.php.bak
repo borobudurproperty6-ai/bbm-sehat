@@ -1,0 +1,144 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Employee;
+use App\Models\PointRule;
+use App\Models\PointTransaction;
+use App\Models\WalkSession;
+use Illuminate\Support\Carbon;
+
+/**
+ * Awards point_transactions for the step-based rules seeded in
+ * PointRuleSeeder — DAILY_TARGET_MET (10pt) and WEEKLY_STREAK_5 (20pt).
+ *
+ * The streak is a rolling count of consecutive workdays, not a
+ * Monday-reset calendar week: a real streak shouldn't arbitrarily break
+ * just because Friday rolls into Monday, and it can't rely on "days left
+ * this week" to reach 5.
+ */
+class PointService
+{
+    public function awardForDailySync(Employee $employee, string $date, int $steps, int $targetSteps): void
+    {
+        if ($steps < $targetSteps) {
+            return;
+        }
+
+        $this->awardOnce($employee, 'DAILY_TARGET_MET', $date);
+
+        $streak = $this->currentStreakDays($employee, $date);
+        if ($streak > 0 && $streak % 5 === 0) {
+            $this->awardOnce($employee, 'WEEKLY_STREAK_5', $date);
+        }
+    }
+
+    /**
+     * Rolling count of consecutive workdays (Mon-Fri) up to and including
+     * $asOfDate that have a recorded DAILY_TARGET_MET — weekends are
+     * skipped over, not treated as a break in the streak. If $asOfDate
+     * itself has no DAILY_TARGET_MET yet, the walk starts from the day
+     * before instead, so an in-progress day never counts as a break.
+     */
+    public function currentStreakDays(Employee $employee, ?string $asOfDate = null): int
+    {
+        $ruleId = PointRule::where('code', 'DAILY_TARGET_MET')->value('id');
+        if ($ruleId === null) {
+            return 0;
+        }
+
+        $metDates = PointTransaction::where('employee_id', $employee->id)
+            ->where('point_rule_id', $ruleId)
+            ->pluck('reference_date')
+            ->map(fn (Carbon $d) => $d->toDateString())
+            ->flip();
+
+        $cursor = Carbon::parse($asOfDate ?? now()->toDateString());
+        if (!isset($metDates[$cursor->toDateString()])) {
+            $cursor = $cursor->copy()->subDay();
+        }
+
+        $streak = 0;
+        while (true) {
+            if ($cursor->isWeekend()) {
+                $cursor = $cursor->copy()->subDay();
+                continue;
+            }
+            if (!isset($metDates[$cursor->toDateString()])) {
+                break;
+            }
+            $streak++;
+            $cursor = $cursor->copy()->subDay();
+        }
+
+        return $streak;
+    }
+
+    /**
+     * Inserts one point_transactions row for $ruleCode on $date, unless
+     * one already exists — re-syncing the same day, or re-checking the
+     * streak on an unchanged day, must never double-award.
+     */
+    private function awardOnce(Employee $employee, string $ruleCode, string $date): void
+    {
+        $rule = PointRule::where('code', $ruleCode)->where('is_active', true)->first();
+        if ($rule === null) {
+            return;
+        }
+
+        $alreadyAwarded = PointTransaction::where('employee_id', $employee->id)
+            ->where('point_rule_id', $rule->id)
+            ->where('reference_date', $date)
+            ->exists();
+        if ($alreadyAwarded) {
+            return;
+        }
+
+        PointTransaction::create([
+            'employee_id' => $employee->id,
+            'point_rule_id' => $rule->id,
+            'points_awarded' => $rule->points,
+            'reference_date' => $date,
+            'reference_type' => 'daily_activity_log',
+        ]);
+    }
+
+    /**
+     * WALK_SESSION_LOGGED (5pt), awarded once per session — not once per
+     * day, since a second real walk on the same day deserves its own
+     * points. Dedup keys on reference_id (the session itself), not just
+     * the date, unlike awardOnce()'s daily rules.
+     *
+     * @return int Points actually awarded this call (0 if the rule is
+     *             missing/inactive or already awarded for this session) —
+     *             lets the caller report the real number back to the
+     *             client instead of it guessing/duplicating this rule.
+     */
+    public function awardWalkSession(WalkSession $session): int
+    {
+        $rule = PointRule::where('code', 'WALK_SESSION_LOGGED')->where('is_active', true)->first();
+        if ($rule === null) {
+            return 0;
+        }
+
+        $alreadyAwarded = PointTransaction::where('employee_id', $session->employee_id)
+            ->where('point_rule_id', $rule->id)
+            ->where('reference_type', 'walk_session')
+            ->where('reference_id', $session->id)
+            ->exists();
+        if ($alreadyAwarded) {
+            return 0;
+        }
+
+        PointTransaction::create([
+            'employee_id' => $session->employee_id,
+            'point_rule_id' => $rule->id,
+            'points_awarded' => $rule->points,
+            'reference_date' => $session->started_at->toDateString(),
+            'reference_type' => 'walk_session',
+            'reference_id' => $session->id,
+        ]);
+
+        return $rule->points;
+    }
+}

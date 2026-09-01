@@ -1,0 +1,347 @@
+<?php
+
+namespace App\Services;
+
+use App\Enums\AccountStatus;
+use App\Models\Employee;
+use App\Models\EmployeeTotalPoint;
+use App\Models\PointRule;
+use App\Models\PointTransaction;
+use App\Models\WalkSession;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+
+/**
+ * Company-wide aggregates for the management/admin monitoring dashboard —
+ * distinct from LeaderboardService, which ranks individual employees for
+ * their own competitive view. Every query here re-applies the same sanity
+ * bounds already enforced at write time (SyncActivityRequest's steps
+ * max:50000, WalkSessionService's per-segment GPS speed filter) as a second,
+ * independent line of defense: a single corrupted row — from a bug in a
+ * future client, a direct DB edit, or data written before a bound existed —
+ * must never silently skew a company-wide average or ranking.
+ */
+class MonitoringService
+{
+    // Deliberately generous — far beyond anything a real walk/run session
+    // could log — since this is a last-resort safety net at the aggregate
+    // level, not a re-implementation of the precise per-segment filtering
+    // WalkSessionService already does at write time.
+    private const MAX_PLAUSIBLE_SESSION_METERS = 100000;
+    private const MAX_PLAUSIBLE_DAILY_STEPS = 50000;
+
+    public function __construct(
+        private readonly PointService $points,
+        private readonly ActivityHistoryService $history,
+        private readonly StepTargetResolver $targets,
+    ) {}
+
+    /** @return array{0:string, 1:string} [start date, end date] for the current week (Mon..today) */
+    public function currentWeekRange(): array
+    {
+        $today = now();
+
+        return [$today->copy()->startOfWeek(Carbon::MONDAY)->toDateString(), $today->copy()->toDateString()];
+    }
+
+    public function overview(): array
+    {
+        [$start, $end] = $this->currentWeekRange();
+        $activeEmployeeCount = DB::table('employees')->where('account_status', AccountStatus::Active->value)->count();
+
+        $activeThisWeek = DB::table('employees')
+            ->where('employees.account_status', AccountStatus::Active->value)
+            ->where(function ($q) use ($start, $end) {
+                $q->whereExists(fn ($sub) => $sub->selectRaw(1)
+                    ->from('daily_activity_logs')
+                    ->whereColumn('daily_activity_logs.employee_id', 'employees.id')
+                    ->whereBetween('daily_activity_logs.activity_date', [$start, $end])
+                    ->where('daily_activity_logs.steps', '<=', self::MAX_PLAUSIBLE_DAILY_STEPS))
+                    ->orWhereExists(fn ($sub) => $sub->selectRaw(1)
+                        ->from('walk_sessions')
+                        ->whereColumn('walk_sessions.employee_id', 'employees.id')
+                        ->where('walk_sessions.status', 'completed')
+                        ->whereBetween('walk_sessions.started_at', ["$start 00:00:00", "$end 23:59:59"])
+                        ->where('walk_sessions.distance_meters', '<=', self::MAX_PLAUSIBLE_SESSION_METERS));
+            })
+            ->count();
+
+        $stepsMeters = DB::table('daily_activity_logs')
+            ->whereBetween('activity_date', [$start, $end])
+            ->where('steps', '<=', self::MAX_PLAUSIBLE_DAILY_STEPS)
+            ->selectRaw('COALESCE(SUM(steps), 0) as total_steps, COALESCE(SUM(distance_meters), 0) as total_meters')
+            ->first();
+
+        $walkMeters = DB::table('walk_sessions')
+            ->where('status', 'completed')
+            ->whereBetween('started_at', ["$start 00:00:00", "$end 23:59:59"])
+            ->where('distance_meters', '<=', self::MAX_PLAUSIBLE_SESSION_METERS)
+            ->sum('distance_meters');
+
+        $totalMeters = (float) $stepsMeters->total_meters + (float) $walkMeters;
+
+        return [
+            'total_employees_active' => $activeEmployeeCount,
+            'participation_rate_this_week' => $activeEmployeeCount > 0
+                ? round($activeThisWeek / $activeEmployeeCount * 100, 1)
+                : 0.0,
+            'total_steps_this_week' => (int) $stepsMeters->total_steps,
+            'total_km_this_week' => round($totalMeters / 1000, 2),
+            'period' => ['start' => $start, 'end' => $end],
+        ];
+    }
+
+    /** @return Collection<int, array<string, mixed>> ranked by average points, highest first */
+    public function perDivisi(string $start, string $end): Collection
+    {
+        $rows = DB::table('divisions')
+            ->where('divisions.is_active', true)
+            ->leftJoin('employees', function ($join) {
+                $join->on('employees.division_id', '=', 'divisions.id')->where('employees.account_status', AccountStatus::Active->value);
+            })
+            ->leftJoin('point_transactions', function ($join) use ($start, $end) {
+                $join->on('point_transactions.employee_id', '=', 'employees.id')
+                    ->whereBetween('point_transactions.reference_date', [$start, $end]);
+            })
+            ->leftJoin('daily_activity_logs', function ($join) use ($start, $end) {
+                $join->on('daily_activity_logs.employee_id', '=', 'employees.id')
+                    ->whereBetween('daily_activity_logs.activity_date', [$start, $end])
+                    ->where('daily_activity_logs.steps', '<=', self::MAX_PLAUSIBLE_DAILY_STEPS);
+            })
+            ->groupBy('divisions.id', 'divisions.name')
+            ->selectRaw(
+                'divisions.id as division_id, divisions.name as division_name, '.
+                'COUNT(DISTINCT employees.id) as employee_count, '.
+                'COALESCE(SUM(point_transactions.points_awarded), 0) as total_points, '.
+                'COALESCE(SUM(daily_activity_logs.steps), 0) as total_steps'
+            )
+            ->orderByDesc('total_points')
+            ->orderBy('divisions.id')
+            ->get();
+
+        return $rows->values()->map(function ($row, int $index) {
+            $employeeCount = (int) $row->employee_count;
+
+            return [
+                'rank' => $index + 1,
+                'division_id' => (int) $row->division_id,
+                'division_name' => $row->division_name,
+                'employee_count' => $employeeCount,
+                'avg_points' => $employeeCount > 0 ? round($row->total_points / $employeeCount, 1) : 0.0,
+                'avg_steps' => $employeeCount > 0 ? (int) round($row->total_steps / $employeeCount) : 0,
+            ];
+        })->sortByDesc('avg_points')->values()->map(function ($row, int $index) {
+            $row['rank'] = $index + 1;
+
+            return $row;
+        });
+    }
+
+    /** @return Collection<int, array<string, mixed>> active employees with no logged activity in the last $days days */
+    public function tidakAktif(int $days): Collection
+    {
+        $since = now()->subDays($days)->toDateString();
+
+        return DB::table('employees')
+            ->where('employees.account_status', AccountStatus::Active->value)
+            ->join('divisions', 'divisions.id', '=', 'employees.division_id')
+            ->whereNotExists(fn ($sub) => $sub->selectRaw(1)
+                ->from('daily_activity_logs')
+                ->whereColumn('daily_activity_logs.employee_id', 'employees.id')
+                ->where('daily_activity_logs.activity_date', '>=', $since))
+            ->whereNotExists(fn ($sub) => $sub->selectRaw(1)
+                ->from('walk_sessions')
+                ->whereColumn('walk_sessions.employee_id', 'employees.id')
+                ->where('walk_sessions.status', 'completed')
+                ->where('walk_sessions.started_at', '>=', "$since 00:00:00"))
+            ->orderBy('divisions.name')
+            ->orderBy('employees.full_name')
+            ->selectRaw(
+                'employees.id, employees.full_name, employees.employee_code, '.
+                'employees.photo_path, divisions.name as division_name'
+            )
+            ->get()
+            ->map(fn ($row) => [
+                'id' => (int) $row->id,
+                'full_name' => $row->full_name,
+                'employee_code' => $row->employee_code,
+                'photo_url' => $row->photo_path ? Storage::disk('public')->url($row->photo_path) : null,
+                'division_name' => $row->division_name,
+                'last_activity_date' => $this->lastActivityDate((int) $row->id),
+            ]);
+    }
+
+    /**
+     * Paginated employee list for the Monitoring screen's "Progres
+     * Karyawan" section. $filters: search (string|null), sort_by
+     * (poin|langkah_minggu_ini|nama|divisi), division_id (int|null),
+     * per_page (int), page (int).
+     */
+    public function employees(array $filters): LengthAwarePaginator
+    {
+        [$start, $end] = $this->currentWeekRange();
+
+        $weeklySteps = DB::table('daily_activity_logs')
+            ->select('employee_id', DB::raw('SUM(steps) as steps_this_week'))
+            ->whereBetween('activity_date', [$start, $end])
+            ->where('steps', '<=', self::MAX_PLAUSIBLE_DAILY_STEPS)
+            ->groupBy('employee_id');
+
+        $query = Employee::query()
+            ->where('employees.account_status', AccountStatus::Active->value)
+            ->join('divisions', 'divisions.id', '=', 'employees.division_id')
+            ->leftJoin('employee_total_points', 'employee_total_points.employee_id', '=', 'employees.id')
+            ->leftJoinSub($weeklySteps, 'weekly_steps', 'weekly_steps.employee_id', '=', 'employees.id')
+            ->select([
+                'employees.id',
+                'employees.full_name',
+                'employees.employee_code',
+                'employees.photo_path',
+                'divisions.name as division_name',
+            ])
+            ->selectRaw('COALESCE(employee_total_points.total_points, 0) as total_points')
+            ->selectRaw('COALESCE(weekly_steps.steps_this_week, 0) as steps_this_week');
+
+        if (! empty($filters['search'])) {
+            $query->where('employees.full_name', 'like', '%'.$filters['search'].'%');
+        }
+        if (! empty($filters['division_id'])) {
+            $query->where('employees.division_id', $filters['division_id']);
+        }
+
+        [$column, $direction] = match ($filters['sort_by'] ?? 'poin') {
+            'nama' => ['employees.full_name', 'asc'],
+            'divisi' => ['divisions.name', 'asc'],
+            'langkah_minggu_ini' => ['steps_this_week', 'desc'],
+            default => ['total_points', 'desc'],
+        };
+        $query->orderBy($column, $direction)->orderBy('employees.id');
+
+        /** @var LengthAwarePaginator $paginated */
+        $paginated = $query->paginate(
+            perPage: max(1, min((int) ($filters['per_page'] ?? 20), 100)),
+            page: max((int) ($filters['page'] ?? 1), 1),
+        );
+
+        // Status aktif (7 hari) and streak are only computed for this
+        // page's rows, not all 48+ employees — cheap at pagination scale,
+        // and the "active in the last 7 days" definition is kept
+        // identical to tidakAktif()'s (just inverted) rather than
+        // reimplemented.
+        $pageIds = collect($paginated->items())->pluck('id');
+        $since = now()->subDays(7)->toDateString();
+        $activeIds = DB::table('employees')
+            ->whereIn('employees.id', $pageIds)
+            ->where(function ($q) use ($since) {
+                $q->whereExists(fn ($sub) => $sub->selectRaw(1)
+                    ->from('daily_activity_logs')
+                    ->whereColumn('daily_activity_logs.employee_id', 'employees.id')
+                    ->where('daily_activity_logs.activity_date', '>=', $since))
+                    ->orWhereExists(fn ($sub) => $sub->selectRaw(1)
+                        ->from('walk_sessions')
+                        ->whereColumn('walk_sessions.employee_id', 'employees.id')
+                        ->where('walk_sessions.status', 'completed')
+                        ->where('walk_sessions.started_at', '>=', "$since 00:00:00"));
+            })
+            ->pluck('employees.id')
+            ->all();
+
+        // Resolved once for the whole page rather than inside the loop below
+        // — DAILY_TARGET_MET's id is the same for every employee, so
+        // re-querying point_rules on every currentStreakDays() call was
+        // pure N+1 (roughly doubling this endpoint's query count at
+        // 45+ employees for a value that never changes per-row).
+        $dailyTargetRuleId = PointRule::where('code', 'DAILY_TARGET_MET')->value('id');
+
+        $paginated->getCollection()->transform(function (Employee $employee) use ($activeIds, $dailyTargetRuleId) {
+            $employee->is_active_recently = in_array($employee->id, $activeIds, true);
+            $employee->current_streak_days = $this->points->currentStreakDays($employee, ruleId: $dailyTargetRuleId);
+
+            return $employee;
+        });
+
+        return $paginated;
+    }
+
+    public function employeeDetail(Employee $employee): array
+    {
+        $weekly = $this->history->weekly($employee, $this->targets);
+        $totalPoints = (int) (EmployeeTotalPoint::find($employee->id)?->total_points ?? 0);
+
+        $walkSessions = WalkSession::where('employee_id', $employee->id)
+            ->where('status', 'completed')
+            ->where('distance_meters', '<=', self::MAX_PLAUSIBLE_SESSION_METERS)
+            ->orderByDesc('started_at')
+            ->limit(20)
+            ->get();
+
+        $pointsBySessionId = PointTransaction::where('reference_type', 'walk_session')
+            ->whereIn('reference_id', $walkSessions->pluck('id'))
+            ->pluck('points_awarded', 'reference_id');
+
+        $pointBreakdown = PointTransaction::where('point_transactions.employee_id', $employee->id)
+            ->join('point_rules', 'point_rules.id', '=', 'point_transactions.point_rule_id')
+            ->groupBy('point_rules.id', 'point_rules.code', 'point_rules.name')
+            ->selectRaw(
+                'point_rules.code as rule_code, point_rules.name as rule_name, '.
+                'SUM(point_transactions.points_awarded) as total_points, COUNT(*) as times_awarded'
+            )
+            ->orderByDesc('total_points')
+            ->get();
+
+        return [
+            'employee' => [
+                'id' => $employee->id,
+                'full_name' => $employee->full_name,
+                'employee_code' => $employee->employee_code,
+                'photo_url' => $employee->photoUrl(),
+                'division_name' => $employee->division?->name,
+                'role_name' => $employee->role?->name,
+                'position_title' => $employee->position_title,
+            ],
+            'total_points' => $totalPoints,
+            'current_streak_days' => $this->points->currentStreakDays($employee),
+            'average_daily_steps' => $weekly['average_daily_steps'],
+            'weekly_history' => $weekly['entries'],
+            'walk_sessions' => $walkSessions->map(fn (WalkSession $s) => [
+                'id' => $s->id,
+                'started_at' => $s->started_at->toIso8601String(),
+                'ended_at' => $s->ended_at?->toIso8601String(),
+                'duration_seconds' => $s->duration_seconds,
+                'distance_meters' => (float) $s->distance_meters,
+                'points_awarded' => $pointsBySessionId[$s->id] ?? 0,
+            ])->values(),
+            'point_breakdown' => $pointBreakdown->map(fn ($r) => [
+                'rule_code' => $r->rule_code,
+                'rule_name' => $r->rule_name,
+                'total_points' => (int) $r->total_points,
+                'times_awarded' => (int) $r->times_awarded,
+            ])->values(),
+            // The badge-assignment system (employee_badges) is planned but
+            // not built yet — see the project's own "Setelah Ini: Badge
+            // system" note. Always empty for now, not a bug in this
+            // endpoint; the field stays here so the Flutter side doesn't
+            // need another shape change once badges are implemented.
+            'badges' => [],
+        ];
+    }
+
+    private function lastActivityDate(int $employeeId): ?string
+    {
+        $lastLog = DB::table('daily_activity_logs')
+            ->where('employee_id', $employeeId)
+            ->max('activity_date');
+
+        $lastWalk = DB::table('walk_sessions')
+            ->where('employee_id', $employeeId)
+            ->where('status', 'completed')
+            ->max('started_at');
+
+        $lastWalkDate = $lastWalk ? Carbon::parse($lastWalk)->toDateString() : null;
+
+        return collect([$lastLog, $lastWalkDate])->filter()->sort()->last();
+    }
+}

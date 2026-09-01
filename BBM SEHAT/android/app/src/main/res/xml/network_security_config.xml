@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  No cleartext exceptions. The previous LAN IP (192.168.1.16) whitelist was
+  removed on 2026-09-01 as part of release-readiness cleanup — baseUrl
+  (lib/config/api_config.dart) no longer points at it. Android's default
+  (cleartext HTTP blocked) applies to all domains.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

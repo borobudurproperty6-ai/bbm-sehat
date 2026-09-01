@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "573445272413",
+    "project_id": "bbm-sehat",
+    "storage_bucket": "bbm-sehat.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:573445272413:android:577754648ce687a45d2eb4",
+        "android_client_info": {
+          "package_name": "com.borobudurbumimandiri.bbm_sehat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBOePFf86aVPnL9YsEA8dZklWlrd7Oe1vI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

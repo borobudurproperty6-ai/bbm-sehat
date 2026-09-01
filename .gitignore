@@ -1,0 +1,35 @@
+# Blokir semua isi folder APP/ secara default
+/*
+# Buka HANYA folder BBM Sehat
+!/BBM SEHAT/
+!/bbm-sehat-backend/
+!/.gitignore
+!/README.md
+
+# --- Flutter (BBM SEHAT/) ---
+BBM SEHAT/build/
+BBM SEHAT/.dart_tool/
+BBM SEHAT/.flutter-plugins
+BBM SEHAT/.flutter-plugins-dependencies
+BBM SEHAT/.packages
+BBM SEHAT/android/key.properties
+BBM SEHAT/android/**/*.keystore
+BBM SEHAT/android/**/*.jks
+BBM SEHAT/android/local.properties
+BBM SEHAT/**/*.iml
+BBM SEHAT/.idea/
+BBM SEHAT/ios/Pods/
+
+# --- Laravel (bbm-sehat-backend/) ---
+bbm-sehat-backend/vendor/
+bbm-sehat-backend/node_modules/
+bbm-sehat-backend/.env
+bbm-sehat-backend/.env.*
+bbm-sehat-backend/storage/app/firebase/service-account.json
+bbm-sehat-backend/storage/logs/
+bbm-sehat-backend/storage/framework/cache/
+bbm-sehat-backend/storage/framework/sessions/
+bbm-sehat-backend/storage/framework/views/
+bbm-sehat-backend/bootstrap/cache/
+bbm-sehat-backend/.phpunit.result.cache
+bbm-sehat-backend/public/hot
