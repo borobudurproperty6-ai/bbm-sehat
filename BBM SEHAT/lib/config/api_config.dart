@@ -23,7 +23,7 @@ class ApiConfig {
   /// changed again once the backend moves to a real deployed server (this
   /// LAN IP will be meaningless off this network / once the Mac is off) —
   /// don't ship this value in the eventual UAT/production build.
-  static const String baseUrl = 'http://127.0.0.1:8000/api';
+  static const String baseUrl = 'https://api.bbmsehat.id/api';
 
   static const Duration connectTimeout = Duration(seconds: 10);
   static const Duration receiveTimeout = Duration(seconds: 10);
