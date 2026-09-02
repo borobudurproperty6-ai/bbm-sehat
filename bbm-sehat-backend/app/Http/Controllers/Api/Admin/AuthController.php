@@ -77,30 +77,7 @@ class AuthController extends Controller
         return response()->json([
             'must_change_password' => $employee->must_change_password,
             'employee' => new EmployeeResource($employee->load(['division', 'role'])),
-            'redirect_to' => route($this->homeRouteFor($employee)),
+            'redirect_to' => route($employee->dashboardHomeRoute()),
         ]);
-    }
-
-    /**
-     * Where to land right after login — every role that reaches here has
-     * passed the role_not_allowed check above, but that does NOT mean every
-     * one of them has a page: "Pengaturan Pengguna" is only ever open to the
-     * user_settings whitelist (see Employee::isWhitelistedForUserSettings),
-     * narrower than the SUPER_ADMIN role itself, so a non-whitelisted
-     * SUPER_ADMIN falls through to Monitoring like MANAGEMENT/ADMIN_UMUM_SDM
-     * do. DIVISION_ADMIN also falls through to Monitoring even though that
-     * page's own route middleware (role:management,super_admin,admin_umum_sdm)
-     * doesn't include it either — there is currently no dashboard page for
-     * Division Admin at all (a separate, already-tracked gap, not something
-     * this redirect can paper over); Monitoring is just the closest existing
-     * page rather than a route name that doesn't exist.
-     */
-    private function homeRouteFor(Employee $employee): string
-    {
-        if ($employee->isSuperAdmin() && $employee->isWhitelistedForUserSettings()) {
-            return 'dashboard.pengaturan-pengguna';
-        }
-
-        return 'dashboard.monitoring.ringkasan';
     }
 }

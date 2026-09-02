@@ -15,6 +15,15 @@ Route::get('/dashboard/login', function () {
     return view('admin.login');
 })->name('dashboard.login');
 
+// Mandatory first-login password change — deliberately gated on
+// auth:web only, no role: restriction, since must_change_password
+// can be true for any dashboard role that made it past
+// AuthController::login.
+Route::middleware(['auth:web'])->group(function () {
+    Route::get('/dashboard/ganti-password-wajib', [DashboardController::class, 'gantiPasswordWajib'])
+        ->name('dashboard.ganti-password-wajib');
+});
+
 // "Pengaturan Pengguna" additionally requires the actor's employee_code to
 // be in the whitelist (config('dashboard.user_settings_allowed_employee_codes'))
 // — role:super_admin alone is not enough. See EnsureEmployeeIsWhitelistedForUserSettings.

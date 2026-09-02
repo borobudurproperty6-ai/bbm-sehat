@@ -156,4 +156,33 @@ class Employee extends Authenticatable
 
         return in_array(strtoupper((string) $this->employee_code), $allowed, true);
     }
+
+    /**
+     * Where to land right after login — every role that reaches the
+     * dashboard has already passed AuthController::login's role check, but
+     * that doesn't mean every one of them has a page: "Pengaturan Pengguna"
+     * is only ever open to the user_settings whitelist (see
+     * isWhitelistedForUserSettings()), narrower than the SUPER_ADMIN role
+     * itself, so a non-whitelisted SUPER_ADMIN falls through to Monitoring
+     * like MANAGEMENT/ADMIN_UMUM_SDM do. DIVISION_ADMIN also falls through
+     * to Monitoring even though that page's own route middleware
+     * (role:management,super_admin,admin_umum_sdm) doesn't include it
+     * either — there is currently no dashboard page for Division Admin at
+     * all (a separate, already-tracked gap, not something this can paper
+     * over); Monitoring is just the closest existing page rather than a
+     * route name that doesn't exist.
+     *
+     * Shared by AuthController::login (post-login redirect target) and
+     * DashboardController::gantiPasswordWajib (where to send the employee
+     * once they've cleared the mandatory password change), so the two can
+     * never drift apart.
+     */
+    public function dashboardHomeRoute(): string
+    {
+        if ($this->isSuperAdmin() && $this->isWhitelistedForUserSettings()) {
+            return 'dashboard.pengaturan-pengguna';
+        }
+
+        return 'dashboard.monitoring.ringkasan';
+    }
 }

@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import Login from './pages/Login';
+import GantiPasswordWajib from './pages/GantiPasswordWajib';
 import PengaturanPengguna from './pages/PengaturanPengguna';
 import MonitoringRingkasan from './pages/MonitoringRingkasan';
 import MonitoringPerDivisi from './pages/MonitoringPerDivisi';
@@ -14,6 +15,13 @@ if (root) {
 
     if (page === 'login') {
         app.render(<Login />);
+    } else if (page === 'ganti-password-wajib') {
+        app.render(
+            <GantiPasswordWajib
+                employee={JSON.parse(root.dataset.employee)}
+                redirectTo={root.dataset.redirectTo}
+            />
+        );
     } else if (page === 'pengaturan-pengguna') {
         app.render(<PengaturanPengguna employee={JSON.parse(root.dataset.employee)} />);
     } else if (page === 'monitoring-ringkasan') {

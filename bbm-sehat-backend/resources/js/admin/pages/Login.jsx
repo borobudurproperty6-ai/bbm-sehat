@@ -15,14 +15,18 @@ export default function Login() {
 
         try {
             // Landing page depends on role + whitelist — only the backend
-            // knows both (see AuthController::login's homeRouteFor()), so
-            // it decides the destination, not a hardcoded value here.
+            // knows both (see Employee::dashboardHomeRoute()), so it decides
+            // the destination, not a hardcoded value here. must_change_password
+            // overrides that destination: the mandatory password change page
+            // always comes first, regardless of role.
             const result = await apiFetch('/api/admin/login', {
                 method: 'POST',
                 body: JSON.stringify({ email, password }),
             });
 
-            window.location.href = result.redirect_to;
+            window.location.href = result.must_change_password
+                ? '/dashboard/ganti-password-wajib'
+                : result.redirect_to;
         } catch (err) {
             setError(err.message);
             setSubmitting(false);

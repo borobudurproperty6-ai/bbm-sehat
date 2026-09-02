@@ -18,6 +18,16 @@ class DashboardController extends Controller
         return view('admin.pengaturan-pengguna', ['employee' => $this->currentEmployee($request)]);
     }
 
+    public function gantiPasswordWajib(Request $request): View
+    {
+        $employee = $request->user();
+
+        return view('admin.ganti-password-wajib', [
+            'employee' => $this->currentEmployee($request),
+            'redirectTo' => route($employee->dashboardHomeRoute()),
+        ]);
+    }
+
     public function monitoringRingkasan(Request $request): View
     {
         return view('admin.monitoring-ringkasan', ['employee' => $this->currentEmployee($request)]);
