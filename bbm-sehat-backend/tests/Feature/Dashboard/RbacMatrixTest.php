@@ -62,7 +62,7 @@ class RbacMatrixTest extends TestCase
         $this->assertSame(['ADMIN_UMUM_SDM', 'SUPER_ADMIN'], $byLabel['Ubah Status Akun']['roles']);
         $this->assertSame(['SUPER_ADMIN'], $byLabel['Log Aktivitas (Audit)']['roles']);
         $this->assertSame(['ADMIN_UMUM_SDM', 'MANAGEMENT', 'SUPER_ADMIN'], $byLabel['Dashboard Monitoring']['roles']);
-        $this->assertSame(['ADMIN_UMUM_SDM', 'SUPER_ADMIN'], $byLabel['Kirim Pengingat Jalan']['roles']);
+        $this->assertSame(['ADMIN_UMUM_SDM', 'MANAGEMENT', 'SUPER_ADMIN'], $byLabel['Kirim Pengingat Jalan']['roles']);
         $this->assertSame(['SUPER_ADMIN'], $byLabel['Pengaturan Pengguna (halaman ini)']['roles']);
 
         $this->assertTrue($byLabel['Pengaturan Pengguna (halaman ini)']['whitelist_only']);

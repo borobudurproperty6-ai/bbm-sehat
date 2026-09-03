@@ -51,17 +51,17 @@ class WalkReminderApiTest extends TestCase
         ]);
     }
 
+    // MANAGEMENT (Direktur/Komisaris) was added alongside SUPER_ADMIN and
+    // ADMIN_UMUM_SDM so the "Kirim Reminder Jalan Kaki" button they see in
+    // the mobile app's Monitoring tab isn't rejected by the backend.
     public static function allowedRoles(): array
     {
-        return [['SUPER_ADMIN'], ['ADMIN_UMUM_SDM']];
+        return [['SUPER_ADMIN'], ['ADMIN_UMUM_SDM'], ['MANAGEMENT']];
     }
 
-    // Deliberately different from /api/monitoring/*'s allowed set — this
-    // endpoint's scope was explicitly limited to SUPER_ADMIN and
-    // ADMIN_UMUM_SDM only, so MANAGEMENT is a denied role here.
     public static function deniedRoles(): array
     {
-        return [['EMPLOYEE'], ['DIVISION_ADMIN'], ['MANAGEMENT']];
+        return [['EMPLOYEE'], ['DIVISION_ADMIN']];
     }
 
     #[DataProvider('allowedRoles')]

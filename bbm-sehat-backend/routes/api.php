@@ -122,8 +122,10 @@ Route::middleware(['auth:sanctum', 'role:management,super_admin,admin_umum_sdm']
 //    per slot); this manual one is deliberately exempt from that dedup, so
 //    an admin re-triggering it on purpose always actually sends. Not
 //    nested under the /admin prefix group above: its role set (super_admin,
-//    admin_umum_sdm) doesn't match either middleware layer already declared
-//    there, and stacking a third `role:` middleware would AND the role
-//    checks together rather than replace them. ─────────────────────────────
+//    admin_umum_sdm, management) doesn't match either middleware layer
+//    already declared there, and stacking a third `role:` middleware would
+//    AND the role checks together rather than replace them. management is
+//    included so Direktur/Komisaris — who see this button in the mobile
+//    app's Monitoring tab — aren't blocked by the backend. ────────────────
 Route::post('/admin/send-walk-reminder', [WalkReminderController::class, 'send'])
-    ->middleware(['auth:sanctum', 'role:super_admin,admin_umum_sdm']);
+    ->middleware(['auth:sanctum', 'role:super_admin,admin_umum_sdm,management']);
